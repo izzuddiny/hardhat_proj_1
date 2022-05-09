@@ -34,7 +34,7 @@ contract Block is ERC20Interface{
         return balances[tokenOwner];
     }
 
-    function transfer(address to, uint tokens) public override returns(bool success){
+    function transfer(address to, uint tokens) public override virtual returns(bool success){
         require(balances[msg.sender]>=tokens);
         balances[to]+=tokens; //balances[to] + tokens
         balances[msg.sender]-= tokens;
@@ -54,7 +54,7 @@ contract Block is ERC20Interface{
         return allowed[tokenOwner][spender];
     }
 
-    function transferFrom(address from, address to, uint tokens) public override returns(bool success){
+    function transferFrom(address from, address to, uint tokens) public override virtual returns(bool success){
         require(allowed[from][to]>=tokens);
         require(balances[from]>=tokens);
         balances[from] -= tokens;
@@ -87,5 +87,84 @@ contract ICO is Block {
     State public icoState;
 
     event Invest(address investor, uint value, uint token);
+
+    constructor(address payable _deposit){
+        deposit = _deposit;
+        manager = msg.sender;
+        icoState = State.beforeStart;
+    }
+
+    modifier onlyManager(){
+        require(msg.sender == manager);
+        _;
+    }
+
+    function halt() public onlyManager{
+        icoState = State.halted;
+    }
+
+    function resume() public onlyManager{
+        icoState = State.running;
+    }
+
+    function changeDepositAddr(address payable newDeposit) public onlyManager{
+        deposit = newDeposit;
+    }
+
+    function getState() public view returns(State){
+        if(icoState == State.halted){
+            return State.halted;
+        }else if (block.timestamp < icoStart){
+            return State.beforeStart;
+        }else if (block.timestamp >= icoStart && block.timestamp <= icoEnd){
+            return State.running;
+        }else{
+            return State.afterEnd;
+        }
+    }
+
+    function invest() payable public returns(bool){
+        icoState = getState();
+        require(icoState == State.running);
+        require(msg.value >=minInvest && msg.value <= maxInvest);
+
+        raisedAmount += msg.value;
+
+        require(raisedAmount <= cap);
+
+        uint tokens = msg.value/tokenPrice;
+
+        balances[msg.sender]+= tokens;
+
+        balances[founder] -= tokens;
+        deposit.transfer(msg.value);
+
+        emit Invest(msg.sender, msg.value, tokens);
+        return true;
+
+    }
+
+    function burn() public returns(bool){
+        icoState=getState();
+        require(icoState == State.afterEnd);
+        balances[founder] = 0;
+        return true;
+    }
+
+    function transfer(address to, uint tokens) public override returns(bool success){
+        require(block.timestamp > tokenTradeTime);
+        super.transfer(to, tokens);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint tokens) public override returns(bool success){
+        require(block.timestamp > tokenTradeTime);
+        Block.transferFrom(from, to, tokens);
+        return true;
+    }
+
+    receive() external payable{
+        invest();
+    }
 
 }
